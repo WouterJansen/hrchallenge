@@ -38,11 +38,8 @@ class HeartRateApp {
             audioSection: document.getElementById('audioSection'),
             playBtn: document.getElementById('playBtn'),
             pauseBtn: document.getElementById('pauseBtn'),
-            audioUpload: document.getElementById('audioUpload'),
-            requiredTime: document.getElementById('requiredTime')
+            audioUpload: document.getElementById('audioUpload')
         };
-        
-        this.elements.requiredTime.textContent = this.requiredTime;
     }
     
     attachEventListeners() {
