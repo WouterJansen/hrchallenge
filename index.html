@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heart Rate Challenge - Unlock the Secret Message</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🫀 Heart Rate Challenge</h1>
+            <p class="subtitle">Connect your heart rate monitor and reach the target zone to unlock the secret message!</p>
+        </header>
+
+        <div class="card">
+            <div class="status-section">
+                <div class="connection-status" id="connectionStatus">
+                    <span class="status-dot disconnected"></span>
+                    <span>Not Connected</span>
+                </div>
+                
+                <button id="connectBtn" class="btn btn-primary">
+                    🔗 Connect Heart Rate Monitor
+                </button>
+            </div>
+
+            <div class="hr-display" id="hrDisplay">
+                <div class="hr-value">
+                    <span class="hr-number" id="hrNumber">--</span>
+                    <span class="hr-unit">BPM</span>
+                </div>
+                <div class="hr-label">Current Heart Rate</div>
+            </div>
+
+            <div class="target-zone">
+                <h3>Target Zone</h3>
+                <div class="zone-inputs">
+                    <div class="input-group">
+                        <label for="minHR">Min BPM:</label>
+                        <input type="number" id="minHR" value="120" min="60" max="200">
+                    </div>
+                    <div class="input-group">
+                        <label for="maxHR">Max BPM:</label>
+                        <input type="number" id="maxHR" value="150" min="60" max="200">
+                    </div>
+                </div>
+                <div class="zone-display">
+                    <span id="zoneStatus" class="zone-status">Outside Zone</span>
+                </div>
+            </div>
+
+            <div class="progress-section">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <p class="progress-text">Stay in zone for <span id="requiredTime">5</span> seconds to unlock!</p>
+                <p class="timer-text">Time in zone: <span id="timeInZone">0</span>s</p>
+            </div>
+
+            <div class="audio-section" id="audioSection" style="display: none;">
+                <h3>🎵 Secret Message Unlocked!</h3>
+                <div class="audio-controls">
+                    <button id="playBtn" class="btn btn-success">▶️ Play Message</button>
+                    <button id="pauseBtn" class="btn btn-secondary" style="display: none;">⏸️ Pause</button>
+                </div>
+                <div class="audio-info">
+                    <p>You can also upload your own audio message:</p>
+                    <input type="file" id="audioUpload" accept="audio/*">
+                </div>
+            </div>
+        </div>
+
+        <div class="info-card">
+            <h3>ℹ️ How It Works</h3>
+            <ol>
+                <li>Connect a Bluetooth heart rate monitor (chest strap or watch)</li>
+                <li>Set your target heart rate zone (or use the default 120-150 BPM)</li>
+                <li>Exercise to reach and maintain your target zone</li>
+                <li>Stay in the zone for 5 seconds to unlock the secret audio message!</li>
+            </ol>
+            <p class="note"><strong>Note:</strong> This requires a Bluetooth-enabled device and works best on Chrome, Edge, or Opera browsers.</p>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
