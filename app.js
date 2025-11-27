@@ -57,25 +57,58 @@ class HeartRateApp {
         this.gainNode = this.audioContext.createGain();
         this.lowPassFilter = this.audioContext.createBiquadFilter();
         this.highPassFilter = this.audioContext.createBiquadFilter();
+        this.bandPassFilter = this.audioContext.createBiquadFilter();
+        this.notchFilter = this.audioContext.createBiquadFilter();
         this.analyser = this.audioContext.createAnalyser();
+        this.convolver = this.audioContext.createConvolver();
         
         // Configure filters
         this.lowPassFilter.type = 'lowpass';
+        this.lowPassFilter.Q.value = 10; // Sharper cutoff
         this.highPassFilter.type = 'highpass';
+        this.highPassFilter.Q.value = 10;
+        this.bandPassFilter.type = 'bandpass';
+        this.bandPassFilter.Q.value = 0.5;
+        this.notchFilter.type = 'notch';
+        this.notchFilter.Q.value = 20;
         
-        // Create distortion
+        // Create harsh distortion
         this.distortion = this.audioContext.createWaveShaper();
         this.distortion.curve = this.makeDistortionCurve(0);
+        this.distortion.oversample = '4x';
         
-        // Connect the audio graph: source -> distortion -> filters -> gain -> analyser -> destination
-        this.lowPassFilter.connect(this.gainNode);
-        this.highPassFilter.connect(this.lowPassFilter);
+        // Create reverb for convolver
+        await this.createReverb();
+        
+        // Connect the audio graph with multiple filter stages
+        // source -> distortion -> highpass -> bandpass -> lowpass -> notch -> convolver -> gain -> analyser -> destination
+        this.notchFilter.connect(this.convolver);
+        this.convolver.connect(this.gainNode);
+        this.lowPassFilter.connect(this.notchFilter);
+        this.bandPassFilter.connect(this.lowPassFilter);
+        this.highPassFilter.connect(this.bandPassFilter);
         this.distortion.connect(this.highPassFilter);
         this.gainNode.connect(this.analyser);
         this.analyser.connect(this.audioContext.destination);
         
         // Create a simple beep as default audio message
         await this.createDefaultAudio();
+    }
+    
+    async createReverb() {
+        // Create a reverb impulse response for more scrambling
+        const sampleRate = this.audioContext.sampleRate;
+        const length = sampleRate * 2; // 2 second reverb
+        const impulse = this.audioContext.createBuffer(2, length, sampleRate);
+        
+        for (let channel = 0; channel < 2; channel++) {
+            const channelData = impulse.getChannelData(channel);
+            for (let i = 0; i < length; i++) {
+                channelData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2);
+            }
+        }
+        
+        this.convolver.buffer = impulse;
     }
     
     makeDistortionCurve(amount) {
@@ -85,7 +118,14 @@ class HeartRateApp {
         
         for (let i = 0; i < samples; i++) {
             const x = (i * 2) / samples - 1;
-            curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x));
+            // Much harsher distortion curve
+            if (amount > 0) {
+                curve[i] = ((3 + amount) * x * 57 * deg) / (Math.PI + amount * Math.abs(x));
+                // Add clipping
+                curve[i] = Math.max(-0.9, Math.min(0.9, curve[i]));
+            } else {
+                curve[i] = x;
+            }
         }
         return curve;
     }
@@ -288,21 +328,61 @@ class HeartRateApp {
         if (!this.isPlaying) return;
         
         // distance: 0 = in zone (clear), 1 = far away (maximum scramble)
+        // Apply exponential curve to make it much harder to understand unless very close
+        const scrambleIntensity = Math.pow(distance, 0.3); // Makes it worse faster
         
-        // Low pass filter: clear = 20000Hz, scrambled = 300Hz
-        const lowPassFreq = 20000 - (distance * 19700);
-        this.lowPassFilter.frequency.setTargetAtTime(lowPassFreq, this.audioContext.currentTime, 0.1);
+        // Extreme low pass filter: clear = 20000Hz, scrambled = 200Hz (very muffled)
+        const lowPassFreq = 20000 - (scrambleIntensity * 19800);
+        this.lowPassFilter.frequency.setTargetAtTime(lowPassFreq, this.audioContext.currentTime, 0.05);
         
-        // High pass filter: clear = 20Hz, scrambled = 800Hz
-        const highPassFreq = 20 + (distance * 780);
-        this.highPassFilter.frequency.setTargetAtTime(highPassFreq, this.audioContext.currentTime, 0.1);
+        // Extreme high pass filter: clear = 20Hz, scrambled = 2000Hz (removes bass/body)
+        const highPassFreq = 20 + (scrambleIntensity * 1980);
+        this.highPassFilter.frequency.setTargetAtTime(highPassFreq, this.audioContext.currentTime, 0.05);
         
-        // Distortion: more distortion when further away
-        this.distortion.curve = this.makeDistortionCurve(distance * 400);
+        // Band pass creates a narrow frequency window when scrambled
+        const bandPassFreq = 1000 + (scrambleIntensity * 500);
+        this.bandPassFilter.frequency.setTargetAtTime(bandPassFreq, this.audioContext.currentTime, 0.05);
+        this.bandPassFilter.Q.value = scrambleIntensity * 20 + 0.5; // Narrower when scrambled
         
-        // Volume: quieter when scrambled
-        const volume = 0.3 + (1 - distance) * 0.7;
-        this.gainNode.gain.setTargetAtTime(volume, this.audioContext.currentTime, 0.1);
+        // Notch filter removes key speech frequencies when scrambled
+        const notchFreq = 1500 + (scrambleIntensity * 1000);
+        this.notchFilter.frequency.setTargetAtTime(notchFreq, this.audioContext.currentTime, 0.05);
+        this.notchFilter.Q.value = scrambleIntensity * 30;
+        
+        // Heavy distortion when scrambled
+        this.distortion.curve = this.makeDistortionCurve(scrambleIntensity * 800);
+        
+        // Reverb mix: more reverb when scrambled (makes it muddy)
+        const dryMix = 1 - scrambleIntensity * 0.9;
+        const wetMix = scrambleIntensity * 0.8;
+        
+        // Volume: much quieter when scrambled, only loud when clear
+        const volume = 0.1 + (1 - scrambleIntensity) * 0.9;
+        this.gainNode.gain.setTargetAtTime(volume * dryMix, this.audioContext.currentTime, 0.05);
+        
+        // Adjust convolver to create more chaos when scrambled
+        if (scrambleIntensity > 0.3) {
+            // Regenerate reverb with more chaos
+            this.createChaoticReverb(scrambleIntensity);
+        }
+    }
+    
+    async createChaoticReverb(intensity) {
+        const sampleRate = this.audioContext.sampleRate;
+        const length = sampleRate * (2 + intensity * 2); // Longer reverb when more scrambled
+        const impulse = this.audioContext.createBuffer(2, length, sampleRate);
+        
+        for (let channel = 0; channel < 2; channel++) {
+            const channelData = impulse.getChannelData(channel);
+            for (let i = 0; i < length; i++) {
+                // More random noise = more chaos
+                const noise = (Math.random() * 2 - 1) * intensity;
+                const decay = Math.pow(1 - i / length, 1 - intensity * 0.5);
+                channelData[i] = noise * decay;
+            }
+        }
+        
+        this.convolver.buffer = impulse;
     }
     
 
