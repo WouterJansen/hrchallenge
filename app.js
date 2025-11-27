@@ -38,7 +38,8 @@ class HeartRateApp {
             audioSection: document.getElementById('audioSection'),
             playBtn: document.getElementById('playBtn'),
             pauseBtn: document.getElementById('pauseBtn'),
-            audioUpload: document.getElementById('audioUpload')
+            audioUpload: document.getElementById('audioUpload'),
+            scrambleIntensity: document.getElementById('scrambleIntensity')
         };
     }
     
@@ -47,6 +48,9 @@ class HeartRateApp {
         this.elements.playBtn.addEventListener('click', () => this.playAudio());
         this.elements.pauseBtn.addEventListener('click', () => this.pauseAudio());
         this.elements.audioUpload.addEventListener('change', (e) => this.handleAudioUpload(e));
+        this.elements.scrambleIntensity.addEventListener('input', (e) => {
+            document.getElementById('intensityValue').textContent = e.target.value;
+        });
     }
     
     async initializeAudio() {
@@ -57,36 +61,19 @@ class HeartRateApp {
         this.gainNode = this.audioContext.createGain();
         this.lowPassFilter = this.audioContext.createBiquadFilter();
         this.highPassFilter = this.audioContext.createBiquadFilter();
-        this.bandPassFilter = this.audioContext.createBiquadFilter();
-        this.notchFilter = this.audioContext.createBiquadFilter();
         this.analyser = this.audioContext.createAnalyser();
-        this.convolver = this.audioContext.createConvolver();
         
         // Configure filters
         this.lowPassFilter.type = 'lowpass';
-        this.lowPassFilter.Q.value = 10; // Sharper cutoff
         this.highPassFilter.type = 'highpass';
-        this.highPassFilter.Q.value = 10;
-        this.bandPassFilter.type = 'bandpass';
-        this.bandPassFilter.Q.value = 0.5;
-        this.notchFilter.type = 'notch';
-        this.notchFilter.Q.value = 20;
         
-        // Create harsh distortion
+        // Create distortion
         this.distortion = this.audioContext.createWaveShaper();
         this.distortion.curve = this.makeDistortionCurve(0);
-        this.distortion.oversample = '4x';
         
-        // Create reverb for convolver
-        await this.createReverb();
-        
-        // Connect the audio graph with multiple filter stages
-        // source -> distortion -> highpass -> bandpass -> lowpass -> notch -> convolver -> gain -> analyser -> destination
-        this.notchFilter.connect(this.convolver);
-        this.convolver.connect(this.gainNode);
-        this.lowPassFilter.connect(this.notchFilter);
-        this.bandPassFilter.connect(this.lowPassFilter);
-        this.highPassFilter.connect(this.bandPassFilter);
+        // Connect the audio graph: source -> distortion -> highpass -> lowpass -> gain -> analyser -> destination
+        this.lowPassFilter.connect(this.gainNode);
+        this.highPassFilter.connect(this.lowPassFilter);
         this.distortion.connect(this.highPassFilter);
         this.gainNode.connect(this.analyser);
         this.analyser.connect(this.audioContext.destination);
@@ -95,36 +82,20 @@ class HeartRateApp {
         await this.createDefaultAudio();
     }
     
-    async createReverb() {
-        // Create a reverb impulse response for more scrambling
-        const sampleRate = this.audioContext.sampleRate;
-        const length = sampleRate * 2; // 2 second reverb
-        const impulse = this.audioContext.createBuffer(2, length, sampleRate);
-        
-        for (let channel = 0; channel < 2; channel++) {
-            const channelData = impulse.getChannelData(channel);
-            for (let i = 0; i < length; i++) {
-                channelData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2);
-            }
-        }
-        
-        this.convolver.buffer = impulse;
-    }
-    
     makeDistortionCurve(amount) {
         const samples = 44100;
         const curve = new Float32Array(samples);
-        const deg = Math.PI / 180;
         
-        for (let i = 0; i < samples; i++) {
-            const x = (i * 2) / samples - 1;
-            // Much harsher distortion curve
-            if (amount > 0) {
-                curve[i] = ((3 + amount) * x * 57 * deg) / (Math.PI + amount * Math.abs(x));
-                // Add clipping
-                curve[i] = Math.max(-0.9, Math.min(0.9, curve[i]));
-            } else {
-                curve[i] = x;
+        if (amount === 0) {
+            // No distortion - linear
+            for (let i = 0; i < samples; i++) {
+                curve[i] = (i * 2) / samples - 1;
+            }
+        } else {
+            const deg = Math.PI / 180;
+            for (let i = 0; i < samples; i++) {
+                const x = (i * 2) / samples - 1;
+                curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x));
             }
         }
         return curve;
@@ -327,73 +298,39 @@ class HeartRateApp {
     updateAudioEffects(distance) {
         if (!this.isPlaying) return;
         
+        // Get scramble intensity from slider (0.5 to 3.0)
+        const intensityMultiplier = parseFloat(this.elements.scrambleIntensity.value);
+        
         // distance: 0 = in zone (clear), 1 = far away (maximum scramble)
-        // Use a steeper exponential curve for more dramatic difference
-        const scrambleIntensity = Math.pow(distance, 0.4);
         
-        // When in zone (distance = 0), filters should be transparent
-        // When out of zone, extremely aggressive filtering
-        
-        // Low pass filter: clear = 20000Hz (full spectrum), scrambled = 400Hz (very muffled)
-        const lowPassFreq = distance < 0.05 ? 20000 : 400 + (1 - scrambleIntensity) * 19600;
-        this.lowPassFilter.frequency.setTargetAtTime(lowPassFreq, this.audioContext.currentTime, 0.05);
-        
-        // High pass filter: clear = 20Hz (full bass), scrambled = 1500Hz (removes body)
-        const highPassFreq = distance < 0.05 ? 20 : 1500 - (1 - scrambleIntensity) * 1480;
-        this.highPassFilter.frequency.setTargetAtTime(highPassFreq, this.audioContext.currentTime, 0.05);
-        
-        // Band pass only active when scrambled
-        if (distance < 0.05) {
-            this.bandPassFilter.frequency.setTargetAtTime(10000, this.audioContext.currentTime, 0.05);
-            this.bandPassFilter.Q.value = 0.1; // Wide open, essentially bypassed
-        } else {
-            const bandPassFreq = 800 + (scrambleIntensity * 700);
-            this.bandPassFilter.frequency.setTargetAtTime(bandPassFreq, this.audioContext.currentTime, 0.05);
-            this.bandPassFilter.Q.value = scrambleIntensity * 25 + 1; // Narrower when scrambled
-        }
-        
-        // Notch filter only active when scrambled
-        if (distance < 0.05) {
-            this.notchFilter.Q.value = 0.1; // Minimal effect
-        } else {
-            const notchFreq = 1200 + (scrambleIntensity * 1300);
-            this.notchFilter.frequency.setTargetAtTime(notchFreq, this.audioContext.currentTime, 0.05);
-            this.notchFilter.Q.value = scrambleIntensity * 40;
-        }
-        
-        // Distortion: none when in zone, extreme when out
-        if (distance < 0.05) {
+        if (distance === 0) {
+            // Perfect clarity when in zone
+            this.lowPassFilter.frequency.setTargetAtTime(20000, this.audioContext.currentTime, 0.1);
+            this.highPassFilter.frequency.setTargetAtTime(20, this.audioContext.currentTime, 0.1);
             this.distortion.curve = this.makeDistortionCurve(0);
+            this.gainNode.gain.setTargetAtTime(1.0, this.audioContext.currentTime, 0.1);
         } else {
-            this.distortion.curve = this.makeDistortionCurve(scrambleIntensity * 1000);
+            // Apply scrambling based on distance and intensity slider
+            const scramble = distance * intensityMultiplier;
+            
+            // Low pass filter: reduces high frequencies (makes it muffled)
+            // Clear = 20000Hz, Max scramble = 500Hz
+            const lowPassFreq = Math.max(500, 20000 - (scramble * 6500));
+            this.lowPassFilter.frequency.setTargetAtTime(lowPassFreq, this.audioContext.currentTime, 0.1);
+            
+            // High pass filter: reduces low frequencies (makes it tinny)
+            // Clear = 20Hz, Max scramble = 1200Hz
+            const highPassFreq = Math.min(1200, 20 + (scramble * 400));
+            this.highPassFilter.frequency.setTargetAtTime(highPassFreq, this.audioContext.currentTime, 0.1);
+            
+            // Distortion: adds harsh digital artifacts
+            const distortionAmount = Math.min(400, scramble * 100);
+            this.distortion.curve = this.makeDistortionCurve(distortionAmount);
+            
+            // Volume reduction when scrambled
+            const volume = Math.max(0.2, 1.0 - (scramble * 0.3));
+            this.gainNode.gain.setTargetAtTime(volume, this.audioContext.currentTime, 0.1);
         }
-        
-        // Volume: full when in zone, very quiet when scrambled
-        const volume = distance < 0.05 ? 1.0 : 0.15 + (1 - scrambleIntensity) * 0.85;
-        this.gainNode.gain.setTargetAtTime(volume, this.audioContext.currentTime, 0.05);
-        
-        // Only add chaotic reverb when significantly scrambled
-        if (scrambleIntensity > 0.5) {
-            this.createChaoticReverb(scrambleIntensity);
-        }
-    }
-    
-    async createChaoticReverb(intensity) {
-        const sampleRate = this.audioContext.sampleRate;
-        const length = sampleRate * (1 + intensity * 2); // Longer reverb when more scrambled
-        const impulse = this.audioContext.createBuffer(2, length, sampleRate);
-        
-        for (let channel = 0; channel < 2; channel++) {
-            const channelData = impulse.getChannelData(channel);
-            for (let i = 0; i < length; i++) {
-                // More random noise = more chaos
-                const noise = (Math.random() * 2 - 1) * intensity * 0.7;
-                const decay = Math.pow(1 - i / length, 2);
-                channelData[i] = noise * decay;
-            }
-        }
-        
-        this.convolver.buffer = impulse;
     }
     
 
