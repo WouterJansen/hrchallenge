@@ -328,56 +328,67 @@ class HeartRateApp {
         if (!this.isPlaying) return;
         
         // distance: 0 = in zone (clear), 1 = far away (maximum scramble)
-        // Apply exponential curve to make it much harder to understand unless very close
-        const scrambleIntensity = Math.pow(distance, 0.3); // Makes it worse faster
+        // Use a steeper exponential curve for more dramatic difference
+        const scrambleIntensity = Math.pow(distance, 0.4);
         
-        // Extreme low pass filter: clear = 20000Hz, scrambled = 200Hz (very muffled)
-        const lowPassFreq = 20000 - (scrambleIntensity * 19800);
+        // When in zone (distance = 0), filters should be transparent
+        // When out of zone, extremely aggressive filtering
+        
+        // Low pass filter: clear = 20000Hz (full spectrum), scrambled = 400Hz (very muffled)
+        const lowPassFreq = distance < 0.05 ? 20000 : 400 + (1 - scrambleIntensity) * 19600;
         this.lowPassFilter.frequency.setTargetAtTime(lowPassFreq, this.audioContext.currentTime, 0.05);
         
-        // Extreme high pass filter: clear = 20Hz, scrambled = 2000Hz (removes bass/body)
-        const highPassFreq = 20 + (scrambleIntensity * 1980);
+        // High pass filter: clear = 20Hz (full bass), scrambled = 1500Hz (removes body)
+        const highPassFreq = distance < 0.05 ? 20 : 1500 - (1 - scrambleIntensity) * 1480;
         this.highPassFilter.frequency.setTargetAtTime(highPassFreq, this.audioContext.currentTime, 0.05);
         
-        // Band pass creates a narrow frequency window when scrambled
-        const bandPassFreq = 1000 + (scrambleIntensity * 500);
-        this.bandPassFilter.frequency.setTargetAtTime(bandPassFreq, this.audioContext.currentTime, 0.05);
-        this.bandPassFilter.Q.value = scrambleIntensity * 20 + 0.5; // Narrower when scrambled
+        // Band pass only active when scrambled
+        if (distance < 0.05) {
+            this.bandPassFilter.frequency.setTargetAtTime(10000, this.audioContext.currentTime, 0.05);
+            this.bandPassFilter.Q.value = 0.1; // Wide open, essentially bypassed
+        } else {
+            const bandPassFreq = 800 + (scrambleIntensity * 700);
+            this.bandPassFilter.frequency.setTargetAtTime(bandPassFreq, this.audioContext.currentTime, 0.05);
+            this.bandPassFilter.Q.value = scrambleIntensity * 25 + 1; // Narrower when scrambled
+        }
         
-        // Notch filter removes key speech frequencies when scrambled
-        const notchFreq = 1500 + (scrambleIntensity * 1000);
-        this.notchFilter.frequency.setTargetAtTime(notchFreq, this.audioContext.currentTime, 0.05);
-        this.notchFilter.Q.value = scrambleIntensity * 30;
+        // Notch filter only active when scrambled
+        if (distance < 0.05) {
+            this.notchFilter.Q.value = 0.1; // Minimal effect
+        } else {
+            const notchFreq = 1200 + (scrambleIntensity * 1300);
+            this.notchFilter.frequency.setTargetAtTime(notchFreq, this.audioContext.currentTime, 0.05);
+            this.notchFilter.Q.value = scrambleIntensity * 40;
+        }
         
-        // Heavy distortion when scrambled
-        this.distortion.curve = this.makeDistortionCurve(scrambleIntensity * 800);
+        // Distortion: none when in zone, extreme when out
+        if (distance < 0.05) {
+            this.distortion.curve = this.makeDistortionCurve(0);
+        } else {
+            this.distortion.curve = this.makeDistortionCurve(scrambleIntensity * 1000);
+        }
         
-        // Reverb mix: more reverb when scrambled (makes it muddy)
-        const dryMix = 1 - scrambleIntensity * 0.9;
-        const wetMix = scrambleIntensity * 0.8;
+        // Volume: full when in zone, very quiet when scrambled
+        const volume = distance < 0.05 ? 1.0 : 0.15 + (1 - scrambleIntensity) * 0.85;
+        this.gainNode.gain.setTargetAtTime(volume, this.audioContext.currentTime, 0.05);
         
-        // Volume: much quieter when scrambled, only loud when clear
-        const volume = 0.1 + (1 - scrambleIntensity) * 0.9;
-        this.gainNode.gain.setTargetAtTime(volume * dryMix, this.audioContext.currentTime, 0.05);
-        
-        // Adjust convolver to create more chaos when scrambled
-        if (scrambleIntensity > 0.3) {
-            // Regenerate reverb with more chaos
+        // Only add chaotic reverb when significantly scrambled
+        if (scrambleIntensity > 0.5) {
             this.createChaoticReverb(scrambleIntensity);
         }
     }
     
     async createChaoticReverb(intensity) {
         const sampleRate = this.audioContext.sampleRate;
-        const length = sampleRate * (2 + intensity * 2); // Longer reverb when more scrambled
+        const length = sampleRate * (1 + intensity * 2); // Longer reverb when more scrambled
         const impulse = this.audioContext.createBuffer(2, length, sampleRate);
         
         for (let channel = 0; channel < 2; channel++) {
             const channelData = impulse.getChannelData(channel);
             for (let i = 0; i < length; i++) {
                 // More random noise = more chaos
-                const noise = (Math.random() * 2 - 1) * intensity;
-                const decay = Math.pow(1 - i / length, 1 - intensity * 0.5);
+                const noise = (Math.random() * 2 - 1) * intensity * 0.7;
+                const decay = Math.pow(1 - i / length, 2);
                 channelData[i] = noise * decay;
             }
         }
@@ -395,7 +406,12 @@ class HeartRateApp {
         
         // Stop any currently playing audio
         if (this.audioSource) {
-            this.audioSource.stop();
+            try {
+                this.audioSource.stop();
+                this.audioSource.disconnect();
+            } catch (e) {
+                // Ignore if already stopped
+            }
         }
         
         // Resume audio context if suspended (required for autoplay policies)
@@ -406,30 +422,32 @@ class HeartRateApp {
         // Create a new source
         this.audioSource = this.audioContext.createBufferSource();
         this.audioSource.buffer = this.audioBuffer;
-        this.audioSource.loop = true; // Loop the audio
+        this.audioSource.loop = true; // Loop the audio continuously
         
         // Connect through the effects chain
         this.audioSource.connect(this.distortion);
         
-        // Handle playback end
-        this.audioSource.onended = () => {
-            this.isPlaying = false;
-            this.elements.playBtn.style.display = 'inline-block';
-            this.elements.pauseBtn.style.display = 'none';
-        };
+        // Remove the onended handler since we're looping
+        // It should never end unless manually stopped
         
         this.audioSource.start(0);
         this.isPlaying = true;
         this.elements.playBtn.style.display = 'none';
         this.elements.pauseBtn.style.display = 'inline-block';
         
-        // Initialize effects to maximum scramble
+        // Initialize effects to maximum scramble (or current distance)
         this.updateAudioEffects(1);
     }
     
     pauseAudio() {
         if (this.audioSource && this.isPlaying) {
-            this.audioSource.stop();
+            try {
+                this.audioSource.stop();
+                this.audioSource.disconnect();
+            } catch (e) {
+                // Ignore if already stopped
+            }
+            this.audioSource = null;
             this.isPlaying = false;
             this.elements.playBtn.style.display = 'inline-block';
             this.elements.pauseBtn.style.display = 'none';
