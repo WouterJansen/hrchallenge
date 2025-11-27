@@ -7,19 +7,24 @@ A web application that uses the Web Bluetooth API to connect to heart rate monit
 - 📱 Connect to Bluetooth heart rate monitors (chest straps, watches, etc.)
 - 💓 Real-time heart rate display
 - 🎯 Customizable target heart rate zone
-- ⏱️ Zone timer - stay in zone for 5 seconds to unlock
-- 🎵 Secret audio message revealed upon success
-- 📤 Upload your own custom audio message
-- 📊 Progress tracking with visual feedback
+- 🎵 **Dynamic audio scrambling** - message is heavily distorted when outside target zone
+- 📊 **Progressive clarity** - audio becomes clearer as you approach the target
+- 🔊 **Crystal clear in zone** - only perfectly audible when heart rate is in the sweet spot
+- 📤 Upload your own custom secret audio message
+- 📊 Real-time clarity meter showing how close you are
 - 📱 Responsive design for mobile and desktop
 
 ## How It Works
 
-1. **Connect**: Click "Connect Heart Rate Monitor" and select your Bluetooth device
-2. **Set Target**: Adjust the min/max BPM for your target zone (default: 120-150 BPM)
-3. **Exercise**: Get your heart rate up to reach the target zone
-4. **Unlock**: Stay in the zone for 5 seconds to unlock the secret message
-5. **Listen**: The secret audio message will automatically play!
+1. **Upload**: Add your secret audio message (voice recording, music, anything!)
+2. **Connect**: Click "Connect Heart Rate Monitor" and select your Bluetooth device
+3. **Start**: Click "Start Challenge" - the audio begins playing in heavily scrambled form
+4. **Set Target**: Adjust the min/max BPM for your target zone (default: 120-150 BPM)
+5. **Exercise**: As you exercise and your heart rate changes, the audio clarity changes:
+   - **Far from zone**: Heavily distorted, filtered, barely recognizable
+   - **Getting closer**: Less distortion, becoming more understandable
+   - **In the zone**: Crystal clear! The secret message is fully revealed!
+6. **Maintain**: Try to stay in the zone to keep hearing the clear message!
 
 ## Browser Compatibility
 
@@ -110,12 +115,6 @@ For example: `https://johnsmith.github.io/heart-rate-challenge/`
 
 ## Customization Tips
 
-### Change the Target Time
-Edit `app.js` line 13:
-```javascript
-this.requiredTime = 5; // Change to any number of seconds
-```
-
 ### Change Default Heart Rate Zone
 Edit `index.html` lines 41-42:
 ```html
@@ -123,11 +122,18 @@ Edit `index.html` lines 41-42:
 <input type="number" id="maxHR" value="150" min="60" max="200">
 ```
 
+### Adjust Scrambling Intensity
+Edit `app.js` in the `updateAudioEffects()` function to adjust filter ranges:
+```javascript
+// Make scrambling more/less intense
+const lowPassFreq = 20000 - (distance * 19700); // Lower the multiplier for less scrambling
+const highPassFreq = 20 + (distance * 780); // Adjust for different frequency cutoffs
+```
+
 ### Add Your Own Audio Message
 
-1. **Option 1**: Upload directly in the app using the file input
-2. **Option 2**: Replace the default synthesized audio by modifying the `createDefaultAudio()` function in `app.js`
-3. **Option 3**: Add an audio file to your repository and load it automatically:
+1. **Option 1** (Recommended): Use the file upload button in the app to select any audio file (MP3, WAV, OGG, etc.)
+2. **Option 2**: Add an audio file to your repository and load it automatically:
 
 ```javascript
 // In app.js, replace the createDefaultAudio function:
@@ -159,9 +165,16 @@ Edit `styles.css` to customize:
 - Check that your browser supports Web Bluetooth
 
 **Audio won't play?**
-- Some browsers block autoplay - try clicking the Play button manually
+- Click the "Start Challenge" button to begin audio playback
+- Some browsers block autoplay - user interaction is required
 - Make sure your device volume is turned up
 - Check browser console for any errors
+
+**Audio is always scrambled?**
+- Make sure you're connected to a heart rate monitor
+- Check that your current heart rate is within the target zone
+- Verify the min/max BPM values are set correctly
+- The clarity meter shows how close you are - 100% = crystal clear
 
 **Heart rate not updating?**
 - Ensure your heart rate monitor is properly worn

@@ -50,34 +50,41 @@
                 </div>
             </div>
 
+            <div class="audio-section" id="audioSection">
+                <h3>🎵 Secret Audio Message</h3>
+                <div class="audio-controls">
+                    <button id="playBtn" class="btn btn-success">▶️ Start Challenge</button>
+                    <button id="pauseBtn" class="btn btn-secondary" style="display: none;">⏸️ Stop</button>
+                </div>
+                <div class="audio-info">
+                    <p>Upload your secret audio message:</p>
+                    <input type="file" id="audioUpload" accept="audio/*">
+                    <p class="upload-hint">The message will be scrambled until you reach the target heart rate!</p>
+                </div>
+            </div>
+
             <div class="progress-section">
+                <div class="clarity-label">
+                    <span>🔇 Scrambled</span>
+                    <span>Message Clarity</span>
+                    <span>🔊 Clear</span>
+                </div>
                 <div class="progress-bar">
                     <div class="progress-fill" id="progressFill"></div>
                 </div>
-                <p class="progress-text">Stay in zone for <span id="requiredTime">5</span> seconds to unlock!</p>
-                <p class="timer-text">Time in zone: <span id="timeInZone">0</span>s</p>
-            </div>
-
-            <div class="audio-section" id="audioSection" style="display: none;">
-                <h3>🎵 Secret Message Unlocked!</h3>
-                <div class="audio-controls">
-                    <button id="playBtn" class="btn btn-success">▶️ Play Message</button>
-                    <button id="pauseBtn" class="btn btn-secondary" style="display: none;">⏸️ Pause</button>
-                </div>
-                <div class="audio-info">
-                    <p>You can also upload your own audio message:</p>
-                    <input type="file" id="audioUpload" accept="audio/*">
-                </div>
+                <p class="timer-text">Clarity: <span id="timeInZone">0</span>%</p>
             </div>
         </div>
 
         <div class="info-card">
             <h3>ℹ️ How It Works</h3>
             <ol>
+                <li>Upload your secret audio message (or use the default melody)</li>
                 <li>Connect a Bluetooth heart rate monitor (chest strap or watch)</li>
+                <li>Click "Start Challenge" to begin playing the scrambled audio</li>
                 <li>Set your target heart rate zone (or use the default 120-150 BPM)</li>
-                <li>Exercise to reach and maintain your target zone</li>
-                <li>Stay in the zone for 5 seconds to unlock the secret audio message!</li>
+                <li>Exercise to reach the target zone - the audio becomes clearer as you get closer!</li>
+                <li>Only when you're in the perfect zone will the message be fully clear!</li>
             </ol>
             <p class="note"><strong>Note:</strong> This requires a Bluetooth-enabled device and works best on Chrome, Edge, or Opera browsers.</p>
         </div>

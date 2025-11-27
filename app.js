@@ -6,15 +6,19 @@ class HeartRateApp {
         this.heartRateService = null;
         this.heartRateCharacteristic = null;
         this.currentHeartRate = 0;
-        this.timeInZone = 0;
-        this.requiredTime = 5; // seconds
         this.isInZone = false;
-        this.isUnlocked = false;
         this.checkInterval = null;
         this.audioContext = null;
         this.audioBuffer = null;
         this.audioSource = null;
         this.isPlaying = false;
+        
+        // Audio effects nodes
+        this.gainNode = null;
+        this.lowPassFilter = null;
+        this.highPassFilter = null;
+        this.distortion = null;
+        this.analyser = null;
         
         this.initializeElements();
         this.attachEventListeners();
@@ -52,8 +56,41 @@ class HeartRateApp {
         // Initialize Web Audio API
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         
+        // Create audio effect nodes
+        this.gainNode = this.audioContext.createGain();
+        this.lowPassFilter = this.audioContext.createBiquadFilter();
+        this.highPassFilter = this.audioContext.createBiquadFilter();
+        this.analyser = this.audioContext.createAnalyser();
+        
+        // Configure filters
+        this.lowPassFilter.type = 'lowpass';
+        this.highPassFilter.type = 'highpass';
+        
+        // Create distortion
+        this.distortion = this.audioContext.createWaveShaper();
+        this.distortion.curve = this.makeDistortionCurve(0);
+        
+        // Connect the audio graph: source -> distortion -> filters -> gain -> analyser -> destination
+        this.lowPassFilter.connect(this.gainNode);
+        this.highPassFilter.connect(this.lowPassFilter);
+        this.distortion.connect(this.highPassFilter);
+        this.gainNode.connect(this.analyser);
+        this.analyser.connect(this.audioContext.destination);
+        
         // Create a simple beep as default audio message
         await this.createDefaultAudio();
+    }
+    
+    makeDistortionCurve(amount) {
+        const samples = 44100;
+        const curve = new Float32Array(samples);
+        const deg = Math.PI / 180;
+        
+        for (let i = 0; i < samples; i++) {
+            const x = (i * 2) / samples - 1;
+            curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x));
+        }
+        return curve;
     }
     
     async createDefaultAudio() {
@@ -213,68 +250,65 @@ class HeartRateApp {
     checkHeartRateZone() {
         const minHR = parseInt(this.elements.minHR.value);
         const maxHR = parseInt(this.elements.maxHR.value);
+        const targetHR = (minHR + maxHR) / 2;
         const inZone = this.currentHeartRate >= minHR && this.currentHeartRate <= maxHR;
         
-        if (inZone && !this.isUnlocked) {
+        // Calculate how far we are from the target zone (0 = in zone, 1 = very far)
+        let distance;
+        if (inZone) {
+            distance = 0;
+        } else if (this.currentHeartRate < minHR) {
+            distance = Math.min((minHR - this.currentHeartRate) / minHR, 1);
+        } else {
+            distance = Math.min((this.currentHeartRate - maxHR) / maxHR, 1);
+        }
+        
+        // Update audio effects based on distance
+        this.updateAudioEffects(distance);
+        
+        // Update UI
+        if (inZone) {
             if (!this.isInZone) {
-                // Just entered zone
                 this.isInZone = true;
-                this.elements.zoneStatus.textContent = 'In Target Zone! ✓';
+                this.elements.zoneStatus.textContent = 'In Target Zone! ✓ Message Clear!';
                 this.elements.zoneStatus.classList.add('in-zone');
             }
-            
-            // Increment time in zone
-            this.timeInZone += 0.1;
-            this.updateProgress();
-            
-            if (this.timeInZone >= this.requiredTime && !this.isUnlocked) {
-                this.unlockAudio();
-            }
         } else {
-            if (this.isInZone && !this.isUnlocked) {
-                // Just left zone
+            if (this.isInZone) {
                 this.isInZone = false;
-                this.elements.zoneStatus.textContent = 'Outside Zone';
+                this.elements.zoneStatus.textContent = 'Outside Zone - Message Scrambled';
                 this.elements.zoneStatus.classList.remove('in-zone');
-                this.resetProgress();
             }
         }
-    }
-    
-    updateProgress() {
-        const percentage = Math.min((this.timeInZone / this.requiredTime) * 100, 100);
-        this.elements.progressFill.style.width = percentage + '%';
-        this.elements.timeInZoneDisplay.textContent = this.timeInZone.toFixed(1);
-    }
-    
-    resetProgress() {
-        this.timeInZone = 0;
-        this.updateProgress();
-    }
-    
-    unlockAudio() {
-        this.isUnlocked = true;
-        this.elements.audioSection.style.display = 'block';
         
-        // Celebrate!
-        this.celebrateUnlock();
+        // Update progress bar to show clarity level
+        const clarity = (1 - distance) * 100;
+        this.elements.progressFill.style.width = clarity + '%';
+        this.elements.timeInZoneDisplay.textContent = clarity.toFixed(0) + '%';
     }
     
-    celebrateUnlock() {
-        // Visual celebration
-        this.elements.progressFill.style.background = 'linear-gradient(90deg, #f093fb 0%, #f5576c 100%)';
+    updateAudioEffects(distance) {
+        if (!this.isPlaying) return;
         
-        // Play a celebratory animation
-        document.body.style.animation = 'none';
-        setTimeout(() => {
-            document.body.style.animation = 'celebrate 0.5s ease';
-        }, 10);
+        // distance: 0 = in zone (clear), 1 = far away (maximum scramble)
         
-        // Auto-play the secret message
-        setTimeout(() => {
-            this.playAudio();
-        }, 500);
+        // Low pass filter: clear = 20000Hz, scrambled = 300Hz
+        const lowPassFreq = 20000 - (distance * 19700);
+        this.lowPassFilter.frequency.setTargetAtTime(lowPassFreq, this.audioContext.currentTime, 0.1);
+        
+        // High pass filter: clear = 20Hz, scrambled = 800Hz
+        const highPassFreq = 20 + (distance * 780);
+        this.highPassFilter.frequency.setTargetAtTime(highPassFreq, this.audioContext.currentTime, 0.1);
+        
+        // Distortion: more distortion when further away
+        this.distortion.curve = this.makeDistortionCurve(distance * 400);
+        
+        // Volume: quieter when scrambled
+        const volume = 0.3 + (1 - distance) * 0.7;
+        this.gainNode.gain.setTargetAtTime(volume, this.audioContext.currentTime, 0.1);
     }
+    
+
     
     async playAudio() {
         if (!this.audioBuffer) {
@@ -295,7 +329,10 @@ class HeartRateApp {
         // Create a new source
         this.audioSource = this.audioContext.createBufferSource();
         this.audioSource.buffer = this.audioBuffer;
-        this.audioSource.connect(this.audioContext.destination);
+        this.audioSource.loop = true; // Loop the audio
+        
+        // Connect through the effects chain
+        this.audioSource.connect(this.distortion);
         
         // Handle playback end
         this.audioSource.onended = () => {
@@ -308,6 +345,9 @@ class HeartRateApp {
         this.isPlaying = true;
         this.elements.playBtn.style.display = 'none';
         this.elements.pauseBtn.style.display = 'inline-block';
+        
+        // Initialize effects to maximum scramble
+        this.updateAudioEffects(1);
     }
     
     pauseAudio() {
