@@ -63,6 +63,10 @@ class HeartRateApp {
         this.highPassFilter = this.audioContext.createBiquadFilter();
         this.analyser = this.audioContext.createAnalyser();
         
+        // Create buffer for time-domain scrambling
+        this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 2, 2);
+        this.scrambleAmount = 0;
+        
         // Configure filters
         this.lowPassFilter.type = 'lowpass';
         this.highPassFilter.type = 'highpass';
@@ -71,15 +75,65 @@ class HeartRateApp {
         this.distortion = this.audioContext.createWaveShaper();
         this.distortion.curve = this.makeDistortionCurve(0);
         
-        // Connect the audio graph: source -> distortion -> highpass -> lowpass -> gain -> analyser -> destination
-        this.lowPassFilter.connect(this.gainNode);
-        this.highPassFilter.connect(this.lowPassFilter);
+        // Set up script processor for real-time sample scrambling
+        this.scriptProcessor.onaudioprocess = (e) => this.scrambleSamples(e);
+        
+        // Connect the audio graph: source -> scriptProcessor (scrambler) -> distortion -> highpass -> lowpass -> gain -> analyser -> destination
+        this.scriptProcessor.connect(this.distortion);
         this.distortion.connect(this.highPassFilter);
+        this.highPassFilter.connect(this.lowPassFilter);
+        this.lowPassFilter.connect(this.gainNode);
         this.gainNode.connect(this.analyser);
         this.analyser.connect(this.audioContext.destination);
         
         // Create a simple beep as default audio message
         await this.createDefaultAudio();
+    }
+    
+    scrambleSamples(audioProcessingEvent) {
+        if (this.scrambleAmount === 0) {
+            // Pass through unmodified
+            for (let channel = 0; channel < audioProcessingEvent.outputBuffer.numberOfChannels; channel++) {
+                const inputData = audioProcessingEvent.inputBuffer.getChannelData(channel);
+                const outputData = audioProcessingEvent.outputBuffer.getChannelData(channel);
+                outputData.set(inputData);
+            }
+            return;
+        }
+        
+        // Scramble the samples based on scramble amount
+        for (let channel = 0; channel < audioProcessingEvent.outputBuffer.numberOfChannels; channel++) {
+            const inputData = audioProcessingEvent.inputBuffer.getChannelData(channel);
+            const outputData = audioProcessingEvent.outputBuffer.getChannelData(channel);
+            const bufferLength = inputData.length;
+            
+            // Create chunks and shuffle them
+            const chunkSize = Math.max(1, Math.floor(32 / this.scrambleAmount)); // Smaller chunks = more scrambled
+            const numChunks = Math.floor(bufferLength / chunkSize);
+            
+            // Reverse chunks, swap them randomly, or reverse individual samples
+            for (let i = 0; i < numChunks; i++) {
+                const chunkStart = i * chunkSize;
+                const targetChunk = Math.floor(Math.random() * numChunks);
+                const targetStart = targetChunk * chunkSize;
+                
+                // Copy chunk with random direction and pitch shifting
+                for (let j = 0; j < chunkSize; j++) {
+                    const sourceIndex = chunkStart + (this.scrambleAmount > 1.5 ? (chunkSize - 1 - j) : j);
+                    const targetIndex = targetStart + j;
+                    
+                    if (sourceIndex < bufferLength && targetIndex < bufferLength) {
+                        // Add sample-level chaos: randomly skip samples or reverse
+                        const chaos = Math.random();
+                        if (chaos < this.scrambleAmount / 5) {
+                            outputData[targetIndex] = inputData[Math.floor(Math.random() * bufferLength)];
+                        } else {
+                            outputData[targetIndex] = inputData[sourceIndex] * (1 + (Math.random() - 0.5) * this.scrambleAmount * 0.3);
+                        }
+                    }
+                }
+            }
+        }
     }
     
     makeDistortionCurve(amount) {
@@ -305,6 +359,7 @@ class HeartRateApp {
         
         if (distance === 0) {
             // Perfect clarity when in zone
+            this.scrambleAmount = 0;
             this.lowPassFilter.frequency.setTargetAtTime(20000, this.audioContext.currentTime, 0.1);
             this.highPassFilter.frequency.setTargetAtTime(20, this.audioContext.currentTime, 0.1);
             this.distortion.curve = this.makeDistortionCurve(0);
@@ -312,23 +367,24 @@ class HeartRateApp {
         } else {
             // Apply scrambling based on distance and intensity slider
             const scramble = distance * intensityMultiplier;
+            this.scrambleAmount = scramble;
             
             // Low pass filter: reduces high frequencies (makes it muffled)
-            // Clear = 20000Hz, Max scramble = 500Hz
-            const lowPassFreq = Math.max(500, 20000 - (scramble * 6500));
+            // Clear = 20000Hz, Max scramble = 400Hz
+            const lowPassFreq = Math.max(400, 20000 - (scramble * 6500));
             this.lowPassFilter.frequency.setTargetAtTime(lowPassFreq, this.audioContext.currentTime, 0.1);
             
             // High pass filter: reduces low frequencies (makes it tinny)
-            // Clear = 20Hz, Max scramble = 1200Hz
-            const highPassFreq = Math.min(1200, 20 + (scramble * 400));
+            // Clear = 20Hz, Max scramble = 800Hz
+            const highPassFreq = Math.min(800, 20 + (scramble * 300));
             this.highPassFilter.frequency.setTargetAtTime(highPassFreq, this.audioContext.currentTime, 0.1);
             
             // Distortion: adds harsh digital artifacts
-            const distortionAmount = Math.min(400, scramble * 100);
+            const distortionAmount = Math.min(5000, scramble * 1200);
             this.distortion.curve = this.makeDistortionCurve(distortionAmount);
             
             // Volume reduction when scrambled
-            const volume = Math.max(0.2, 1.0 - (scramble * 0.3));
+            const volume = Math.max(0.3, 1.0 - (scramble * 0.2));
             this.gainNode.gain.setTargetAtTime(volume, this.audioContext.currentTime, 0.1);
         }
     }
@@ -361,8 +417,8 @@ class HeartRateApp {
         this.audioSource.buffer = this.audioBuffer;
         this.audioSource.loop = true; // Loop the audio continuously
         
-        // Connect through the effects chain
-        this.audioSource.connect(this.distortion);
+        // Connect through the effects chain (through script processor for sample scrambling)
+        this.audioSource.connect(this.scriptProcessor);
         
         // Remove the onended handler since we're looping
         // It should never end unless manually stopped
